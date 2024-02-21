@@ -1,0 +1,123 @@
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(knitr)
+library(EnhancedVolcano)
+
+#read in data
+mydata <- read_xlsx("expression_data.xlsx")
+nrow(mydata)  
+
+mydata <- mydata %>% drop_na
+
+################################
+
+nrow(mydata)  
+
+exprdata <- mydata %>% select(Control_1:Hypoxia_3)
+head(exprdata)
+summary(exprdata)
+boxplot(exprdata, ylab="measure", xlab="samples")
+
+hist(unlist(exprdata))
+
+exprdata_log <- log2(exprdata)
+hist(unlist(exprdata_log), breaks=100)
+
+#################################
+
+exprdata_log_t <- t(exprdata_log)
+head(exprdata_log_t[,1:5])
+
+pc <- prcomp(exprdata_log_t, center=TRUE, scale=TRUE)
+plot(pc)
+
+pc_comp <- pc$x
+
+col1="red"
+col2="blue"
+
+plot(pc_comp[1:6,1], pc_comp[1:6,2], col=rep(c(col1, col2), each=3), xlab="PC1", ylab="PC2", pch=16)
+
+text(pc_comp[1:3,1], pc_comp[1:3,2], colnames(exprdata_log)[1:3], col=col1, pos=4)
+text(pc_comp[4:6,1], pc_comp[4:6,2], colnames(exprdata_log)[4:6], col=col2, pos=2)
+
+as.data.frame(pc_comp) %>% 
+  mutate(Group = str_remove(colnames(exprdata), "_.")) %>%   # create group variable
+  ggplot(aes(PC1, PC2, color=Group, label=row.names(.))) +   # plot PC1 and PC2
+  geom_point() +                                             # add points
+  geom_text(size=3, nudge_y = 2) +                           # add text and adjust relative to the points
+  xlim(c(-50,50)) +                                          # set limits for x-axis
+  theme_classic()                                            # set a classic theme
+  
+#####################################
+
+head(apply(exprdata[,1:3], 1, mean))
+exprdata_out <- cbind(Accession=mydata$Accession,
+                      exprdata, 
+                      mean_Control = apply(exprdata[,1:3], 1, mean), 
+                      mean_Hypoxia = apply(exprdata[,4:6], 1, mean))
+head(exprdata_out)
+exprdata_out <- exprdata_out %>% mutate(log2FC = log2(mean_Hypoxia/mean_Control))
+head(exprdata_out)
+FC=0.5
+
+exprdata_out %>% filter(log2FC > FC)
+exprdata_out %>% filter(log2FC < -FC)
+
+
+t.test(exprdata_log[1,1:3], exprdata_log[1,4:6])
+
+#######################################
+
+exprdata_out <- cbind(exprdata_out, 
+                      pvalue = apply(exprdata_log, 1, function(x) {t.test(x[1:3], x[4:6])$p.value}))
+head(exprdata_out)
+exprdata_out <- cbind(exprdata_out, fdr = p.adjust(exprdata_out$pvalue, method="BH"))
+head(exprdata_out)
+exprdata_out[abs(exprdata_out$log2FC)>0.5, ]
+
+alfa=0.5
+
+sum(exprdata_out$pvalue < alfa)
+sum(exprdata_out$fdr < alfa)
+
+kable(exprdata_out[(exprdata_out$log2FC >1 & exprdata_out$fdr < 0.05),], caption = "Hypoxia peptides, FC > 1 and FDR < 0.05")
+write_xlsx(exprdata_out, "results.xlsx")
+
+#####################################
+
+heatdata <- as.matrix(exprdata_log)
+head(heatdata)
+rownames(heatdata) <- mydata$Accession 
+head(heatdata)
+heatmap(heatdata, Colv=NA, margins = c(7,5))
+# Here we select the proteins with and fdr less than 0.05
+set <- exprdata_log[exprdata_out$fdr < 0.05, ]
+
+# This code adds the name of the proteins selected
+rownames(set) <- exprdata_out[exprdata_out$fdr < 0.05, ]$Accession
+
+# and we convert the data set as a matrix so we can plot the data
+heatdata2 <- as.matrix(set)
+
+# to finally create the heatmap
+heatmap(heatdata2, Colv=NA, margins = c(7,5))
+
+########################################
+
+EnhancedVolcano(exprdata_out,                          # data to plot
+                lab = exprdata_out$Accession,         # labels (protein name)
+                x = "log2FC",                         # value to plot in the X-axis
+                y = "pvalue",                         # value to plot in the Y-axis
+                pCutoff = 0.05,    # cut off for the pvalue
+                FCcutoff = 0.5,   # cut off for the fold change
+                title = "Final_plot",        # Title of the plot
+                subtitle = NULL,                      # Remove subtitle to create more space for the plot
+                caption = NULL,                       # Remove caption to create more space for the plot 
+                # (if you remove this line you will get the number of proteins plotted)
+                legendPosition = "top",               # Position the legend on top of the plot
+                axisLabSize = 11,                     # Set font size for axis labels
+                labSize = 2.8,                        # Set font size for protein labels
+                xlim = c(-3,3),                       # Set x-axis limits to -3 and 3 so the plot is symmetric
+                ylim = c(0, 7))                       # Set y-axis limits to 0 and 7
